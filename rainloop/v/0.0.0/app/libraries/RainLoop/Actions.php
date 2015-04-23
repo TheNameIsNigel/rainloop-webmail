@@ -1709,8 +1709,9 @@ class Actions
 		$aResult['LanguageAdmin'] = $this->ValidateLanguage($sLanguageAdmin, '', true);
 
 		$aResult['UserLanguageRaw'] = $this->detectUserLanguage();
-		$aResult['UserLanguage'] = $this->ValidateLanguage($aResult['UserLanguageRaw'], $aResult['Language'], false);
-		$aResult['UserLanguageAdmin'] = $this->ValidateLanguage($aResult['UserLanguageRaw'], $aResult['LanguageAdmin'], true);
+
+		$aResult['UserLanguage'] = $this->ValidateLanguage($aResult['UserLanguageRaw'], '', false, true, true);
+		$aResult['UserLanguageAdmin'] = $this->ValidateLanguage($aResult['UserLanguageRaw'], '', true, true, true);
 
 		$aResult['LangLink'] = './?/Lang/0/'.($bAdmin ? 'Admin' : 'App').'/'.
 			($bAdmin ? $aResult['LanguageAdmin'] : $aResult['Language']).'/'.$sStaticCache.'/';
@@ -2640,7 +2641,7 @@ class Actions
 		\sleep(1);
 		return $this->TrueResponse(__FUNCTION__);
 	}
-	
+
 	/**
 	 * @return array
 	 *
@@ -5459,48 +5460,9 @@ class Actions
 	 *
 	 * @throws \MailSo\Base\Exceptions\Exception
 	 */
-	public function DoMessageThreadsFromCache()
-	{
-		$sFolder = $this->GetActionParam('Folder', '');
-		$sFolderHash = $this->GetActionParam('FolderHash', '');
-		$sUid = (string) $this->GetActionParam('Uid', '');
-
-		if (0 === \strlen($sFolder) || 0 === \strlen($sUid))
-		{
-			throw new \RainLoop\Exceptions\ClientException(\RainLoop\Notifications::InvalidInputArgument);
-		}
-
-		$aResult = array(
-			'Folder' => $sFolder,
-			'Uid' => $sUid,
-			'FolderHash' => $sFolderHash,
-			'ThreadUids' => null
-		);
-
-		$oCache = $this->cacherForUids();
-		if ($oCache && $this->Config()->Get('labs', 'use_imap_thread', false))
-		{
-			$aThreadUids = $this->MailClient()->MessageThreadUidsFromCache(
-				$sFolder, $sFolderHash, $sUid, $oCache
-			);
-
-			if (\is_array($aThreadUids) && 1 < \count($aThreadUids))
-			{
-				$aResult['ThreadUids'] = $aThreadUids;
-			}
-		}
-
-		return $this->DefaultResponse(__FUNCTION__, $aResult);
-	}
-
-	/**
-	 * @return array
-	 *
-	 * @throws \MailSo\Base\Exceptions\Exception
-	 */
 	public function DoMessageList()
 	{
-//		\sleep(1);
+		\sleep(1);
 //		throw new \RainLoop\Exceptions\ClientException(\RainLoop\Notifications::CantGetMessageList);
 
 		$sFolder = '';
@@ -5509,11 +5471,12 @@ class Actions
 		$sSearch = '';
 		$sUidNext = '';
 		$bUseThreads = false;
+		$sThreadUid = '';
 
 		$sRawKey = $this->GetActionParam('RawKey', '');
 		$aValues = $this->getDecodedClientRawKeyValue($sRawKey, 9);
 
-		if (\is_array($aValues) && 9 === \count($aValues))
+		if (\is_array($aValues) && 7 < \count($aValues))
 		{
 			$sFolder =(string) $aValues[0];
 			$iOffset = (int) $aValues[1];
@@ -5521,6 +5484,11 @@ class Actions
 			$sSearch = (string) $aValues[3];
 			$sUidNext = (string) $aValues[6];
 			$bUseThreads = (bool) $aValues[7];
+
+			if ($bUseThreads)
+			{
+				$sThreadUid = isset($aValues[8]) ? (string) $aValues[8] : '';
+			}
 
 			$this->verifyCacheByKey($sRawKey);
 		}
@@ -5532,6 +5500,11 @@ class Actions
 			$sSearch = $this->GetActionParam('Search', '');
 			$sUidNext = $this->GetActionParam('UidNext', '');
 			$bUseThreads = '1' === (string) $this->GetActionParam('UseThreads', '0');
+
+			if ($bUseThreads)
+			{
+				$sThreadUid = (string) $this->GetActionParam('ThreadUid', '');
+			}
 		}
 
 		if (0 === strlen($sFolder))
@@ -5553,7 +5526,7 @@ class Actions
 				$this->cacherForUids(),
 				!!$this->Config()->Get('labs', 'use_imap_sort', false),
 				$bUseThreads,
-				!!$this->Config()->Get('labs', 'use_imap_esearch_esort', false)
+				$sThreadUid
 			);
 		}
 		catch (\Exception $oException)
@@ -5567,40 +5540,6 @@ class Actions
 		}
 
 		return $this->DefaultResponse(__FUNCTION__, $oMessageList);
-	}
-
-	/**
-	 * @return array
-	 *
-	 * @throws \MailSo\Base\Exceptions\Exception
-	 */
-	public function DoMessageListSimple()
-	{
-//		\sleep(2);
-//		throw new \RainLoop\Exceptions\ClientException(\RainLoop\Notifications::CantGetMessageList);
-
-		$sFolder = $this->GetActionParam('Folder', '');
-		$aUids = $this->GetActionParam('Uids', null);
-
-		if (0 === \strlen($sFolder) || !\is_array($aUids))
-		{
-			throw new \RainLoop\Exceptions\ClientException(\RainLoop\Notifications::InvalidInputArgument);
-		}
-
-		$this->initMailClientConnection();
-
-		$aMessageList = array();
-
-		try
-		{
-			$aMessageList = $this->MailClient()->MessageListSimple($sFolder, $aUids);
-		}
-		catch (\Exception $oException)
-		{
-			throw new \RainLoop\Exceptions\ClientException(\RainLoop\Notifications::CantGetMessageList, $oException);
-		}
-
-		return $this->DefaultResponse(__FUNCTION__, $aMessageList);
 	}
 
 	/**
@@ -7724,10 +7663,10 @@ class Actions
 		$iUid = (int) (isset($aValues['Uid']) ? $aValues['Uid'] : 0);
 		$sMimeIndex = (string) (isset($aValues['MimeIndex']) ? $aValues['MimeIndex'] : '');
 
-		header('Content-Type: text/plain', true);
+		\header('Content-Type: text/plain', true);
 
 		return $this->MailClient()->MessageMimeStream(function ($rResource) {
-			if (is_resource($rResource))
+			if (\is_resource($rResource))
 			{
 				\MailSo\Base\Utils::FpassthruWithTimeLimitReset($rResource);
 			}
@@ -8369,10 +8308,11 @@ class Actions
 	 * @param string  $sDefault = ''
 	 * @param bool $bAdmin = false
 	 * @param bool $bSearchShortName = false
+	 * @param bool $bAllowEmptyResult = false
 	 *
 	 * @return string
 	 */
-	public function ValidateLanguage($sLanguage, $sDefault = '', $bAdmin = false, $bSearchShortName = false)
+	public function ValidateLanguage($sLanguage, $sDefault = '', $bAdmin = false, $bSearchShortName = false, $bAllowEmptyResult = false)
 	{
 		$sResult = '';
 		$aLang = $this->GetLanguages($bAdmin);
@@ -8398,7 +8338,7 @@ class Actions
 				$sResult = $sDefault;
 			}
 
-			if (empty($sResult))
+			if (empty($sResult) && !$bAllowEmptyResult)
 			{
 				$sResult = $this->Config()->Get('webmail', $bAdmin ? 'language_admin' : 'language', 'en');
 				$sResult = \in_array($sResult, $aLang) ? $sResult : 'en';
@@ -9359,8 +9299,8 @@ class Actions
 					'Folder' => $mResponse->FolderName,
 					'FolderHash' => $mResponse->FolderHash,
 					'UidNext' => $mResponse->UidNext,
+					'ThreadUid' => $mResponse->ThreadUid,
 					'NewMessages' => $this->responseObject($mResponse->NewMessages),
-//					'LastCollapsedThreadUids' => $mResponse->LastCollapsedThreadUids,
 					'Offset' => $mResponse->Offset,
 					'Limit' => $mResponse->Limit,
 					'Search' => $mResponse->Search
